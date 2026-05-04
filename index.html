@@ -85,6 +85,152 @@
         .task-card {
             transition: all 0.3s ease;
         }
+
+        /* ============================================
+           PRINT / PDF EXPORT STYLING
+           Genereras dynamiskt från tasksData/categories.
+           Skärmläge: dolt. Utskriftsläge: enda synliga.
+           ============================================ */
+
+        /* Skärmläge: göm utskriftsvyn helt */
+        #printView {
+            display: none;
+        }
+
+        @media print {
+            /* Göm hela appen vid utskrift */
+            header, main, footer, #resetModal {
+                display: none !important;
+            }
+
+            /* Visa endast utskriftsvyn */
+            #printView {
+                display: block !important;
+                color: #111;
+                font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                font-size: 10.5pt;
+                line-height: 1.5;
+            }
+
+            body {
+                background: #fff !important;
+            }
+
+            /* Sidlayout */
+            @page {
+                size: A4;
+                margin: 18mm 16mm 18mm 16mm;
+            }
+
+            /* Rubrikblock */
+            .print-header {
+                border-bottom: 2.5px solid #0f766e;
+                padding-bottom: 10px;
+                margin-bottom: 22px;
+            }
+            .print-header h1 {
+                font-size: 19pt;
+                font-weight: 700;
+                color: #0f766e;
+                margin: 0 0 4px 0;
+                letter-spacing: -0.01em;
+            }
+            .print-header .print-meta {
+                font-size: 9pt;
+                color: #555;
+                margin: 0;
+            }
+
+            /* Sektioner per kategori */
+            .print-section {
+                margin-bottom: 22px;
+            }
+            .print-section h2 {
+                font-size: 13.5pt;
+                font-weight: 700;
+                color: #0f766e;
+                border-bottom: 1px solid #d6d3d1;
+                padding-bottom: 5px;
+                margin: 0 0 6px 0;
+                page-break-after: avoid;
+            }
+            .print-section-desc {
+                font-size: 9.5pt;
+                color: #57534e;
+                font-style: italic;
+                margin: 0 0 14px 0;
+                page-break-after: avoid;
+            }
+
+            /* Tasklista */
+            .print-task-list {
+                list-style: none;
+                padding: 0;
+                margin: 0;
+            }
+            .print-task {
+                display: flex;
+                gap: 10px;
+                padding: 9px 0;
+                border-bottom: 1px solid #ececec;
+                page-break-inside: avoid;
+            }
+            .print-task:last-child {
+                border-bottom: none;
+            }
+
+            /* Tomma utskriftbara checkrutor */
+            .printable-checkbox {
+                flex-shrink: 0;
+                width: 14px;
+                height: 14px;
+                border: 1.5px solid #1c1917;
+                border-radius: 2px;
+                margin-top: 3px;
+                background: #fff;
+            }
+
+            .print-task-content {
+                flex: 1;
+                min-width: 0;
+            }
+            .print-task-title {
+                display: block;
+                font-size: 11pt;
+                font-weight: 600;
+                color: #1c1917;
+                margin-bottom: 2px;
+            }
+            .print-task-desc {
+                margin: 0;
+                font-size: 10pt;
+                color: #292524;
+            }
+            .print-task-links {
+                margin-top: 5px;
+                font-size: 9pt;
+                color: #444;
+            }
+            .print-task-links div {
+                margin-top: 2px;
+            }
+            .print-url {
+                font-family: 'Courier New', Courier, monospace;
+                font-size: 8.5pt;
+                color: #555;
+                word-break: break-all;
+            }
+
+            /* Sidfot per kategori */
+            .print-footer {
+                margin-top: 30px;
+                padding-top: 10px;
+                border-top: 1px solid #d6d3d1;
+                font-size: 8.5pt;
+                color: #78716c;
+                text-align: center;
+            }
+        }
     </style>
 </head>
 <body class="bg-stone-50 text-stone-800 font-sans antialiased min-h-screen flex flex-col">
@@ -96,9 +242,14 @@
                 <h1 class="text-3xl font-bold tracking-tight">📋 Checklista för administratörer i Vklass</h1>
                 <p class="text-teal-100 mt-1">Interaktiv arbetsyta för systemrutiner och riktlinjer</p>
             </div>
-            <button onclick="resetProgress()" class="bg-teal-700 hover:bg-teal-600 text-white px-4 py-2 rounded shadow transition-colors border border-teal-500">
-                🔄 Återställ data
-            </button>
+            <div class="flex gap-2">
+                <button onclick="exportToPdf()" class="bg-white hover:bg-stone-100 text-teal-800 px-4 py-2 rounded shadow transition-colors font-medium">
+                    🖨️ Skriv ut / PDF
+                </button>
+                <button onclick="resetProgress()" class="bg-teal-700 hover:bg-teal-600 text-white px-4 py-2 rounded shadow transition-colors border border-teal-500">
+                    🔄 Återställ data
+                </button>
+            </div>
         </div>
     </header>
 
@@ -156,6 +307,9 @@
     <footer class="bg-stone-800 text-stone-300 py-6 text-center text-sm">
         <p>Baserat på Tyresös underlag för riktlinjer i Vklass.</p>
     </footer>
+
+    <!-- Print View (genereras dynamiskt vid utskrift, dold på skärmen) -->
+    <div id="printView" aria-hidden="true"></div>
 
     <!-- Reset Confirmation Modal -->
     <div id="resetModal" class="hidden fixed inset-0 bg-stone-900/50 backdrop-blur-sm flex items-start pt-32 md:pt-40 justify-center z-50 opacity-0 transition-opacity duration-300">
@@ -415,7 +569,84 @@
             closeResetModal();
         }
 
-        // 6. Chart.js Implementation
+        // 6. PDF / Utskriftsexport
+        // Bygger en ren utskriftsvy direkt från categories + tasksData.
+        // Det innebär att alla ändringar i listan automatiskt följer med utan att
+        // någon separat mall behöver underhållas. Användaren får sedan välja
+        // "Spara som PDF" i webbläsarens utskriftsdialog.
+        function exportToPdf() {
+            generatePrintView();
+            // Liten timeout så att DOM hinner uppdateras innan utskriftsdialogen öppnas
+            setTimeout(() => window.print(), 50);
+        }
+
+        function generatePrintView() {
+            const printView = document.getElementById('printView');
+            const today = new Date().toLocaleDateString('sv-SE', {
+                year: 'numeric', month: 'long', day: 'numeric'
+            });
+
+            // Escape för att undvika att specialtecken i task-titlar bryter HTML
+            const esc = (s) => String(s ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+
+            let html = `
+                <div class="print-header">
+                    <h1>Checklista för administratörer i Vklass</h1>
+                    <p class="print-meta">Tyresö kommun &middot; Utskriven ${esc(today)}</p>
+                </div>
+            `;
+
+            categories.forEach(cat => {
+                const catTasks = tasksData.filter(t => t.category === cat.id);
+                if (catTasks.length === 0) return;
+
+                html += `
+                    <section class="print-section">
+                        <h2>${esc(cat.title)}</h2>
+                        <p class="print-section-desc">${esc(cat.desc)}</p>
+                        <ul class="print-task-list">
+                `;
+
+                catTasks.forEach(task => {
+                    let linksHtml = '';
+                    if (task.links && task.links.length > 0) {
+                        linksHtml = '<div class="print-task-links">';
+                        task.links.forEach(link => {
+                            const label = (link.text || 'Länk').replace(/\s*↗\s*$/, '').trim();
+                            linksHtml += `<div>↗ ${esc(label)}: <span class="print-url">${esc(link.url)}</span></div>`;
+                        });
+                        linksHtml += '</div>';
+                    }
+
+                    html += `
+                        <li class="print-task">
+                            <span class="printable-checkbox" aria-hidden="true"></span>
+                            <div class="print-task-content">
+                                <strong class="print-task-title">${esc(task.title)}</strong>
+                                <p class="print-task-desc">${esc(task.desc)}</p>
+                                ${linksHtml}
+                            </div>
+                        </li>
+                    `;
+                });
+
+                html += '</ul></section>';
+            });
+
+            html += `
+                <div class="print-footer">
+                    Baserat på Tyresös underlag för riktlinjer i Vklass.
+                </div>
+            `;
+
+            printView.innerHTML = html;
+        }
+
+        // 7. Chart.js Implementation
         function initChart() {
             const ctx = document.getElementById('progressChart').getContext('2d');
             
