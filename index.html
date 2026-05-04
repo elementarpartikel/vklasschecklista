@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vklass administratör dashboard</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- REQUIRED PLACEHOLDER COMMENTS -->
+    <!-- Chosen Palette: Warm Neutral & Teal (bg-stone-50, text-stone-800, teal-600/700 for accents and progress). Promotes a calm, structured, and professional administrative environment. -->
+    
+    <!-- Application Structure Plan: A task-oriented interactive dashboard. The layout features a top-level progress visualization to give an immediate sense of accomplishment. Below, a tabbed navigation system categorizes tasks temporally ("Inför terminsstart", "Löpande", "Terminsavslut") corresponding to the source report's logical phases. This allows the administrator to focus on relevant tasks without being overwhelmed, transforming a static list into an actionable workflow tool. -->
+    
+    <!-- Visualization & Content Choices: 
+         1. Overall Progress -> Goal: Inform/Motivate -> Donut Chart (Chart.js/Canvas) -> Interaction: Updates dynamically as tasks are checked -> Justification: Provides instant visual feedback on checklist completion. 
+         2. Task Categories -> Goal: Organize -> Tabbed Navigation (HTML/Tailwind + JS) -> Interaction: Click to filter task list -> Justification: Chunks information logically.
+         3. Actionable Tasks -> Goal: Change/Interact -> Clickable Cards with Checkboxes (HTML/JS) -> Interaction: Toggle completion status -> Justification: Turns passive reading into active process management. 
+         (NO SVG/Mermaid used. Relies on structured HTML, CSS styling, Canvas, and Unicode characters). -->
+         
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+
+    <style>
+        /* Specific Chart Container Styling Requirements */
+        .chart-container {
+            position: relative;
+            width: 100%;
+            max-width: 350px;
+            margin-left: auto;
+            margin-right: auto;
+            height: 250px;
+            max-height: 300px;
+        }
+        @media (min-width: 768px) {
+            .chart-container {
+                height: 300px;
+                max-width: 400px;
+            }
+        }
+
+        /* Custom Checkbox Styling using HTML/CSS only */
+        .custom-checkbox {
+            appearance: none;
+            background-color: #fff;
+            margin: 0;
+            font: inherit;
+            color: currentColor;
+            width: 1.5em;
+            height: 1.5em;
+            border: 2px solid #0f766e; /* teal-700 */
+            border-radius: 0.25em;
+            display: grid;
+            place-content: center;
+            cursor: pointer;
+            transition: all 0.2s ease-in-out;
+        }
+
+        .custom-checkbox::before {
+            content: "✔";
+            transform: scale(0);
+            transition: 120ms transform ease-in-out;
+            box-shadow: inset 1em 1em white;
+            color: white;
+            font-size: 1em;
+            line-height: 1;
+        }
+
+        .custom-checkbox:checked {
+            background-color: #0f766e;
+        }
+
+        .custom-checkbox:checked::before {
+            transform: scale(1);
+        }
+
+        .task-card.completed {
+            opacity: 0.6;
+            background-color: #f3f4f6; /* gray-100 */
+            border-color: #d1d5db;
+        }
+        .task-card {
+            transition: all 0.3s ease;
+        }
+    </style>
+</head>
+<body class="bg-stone-50 text-stone-800 font-sans antialiased min-h-screen flex flex-col">
+
+    <!-- Header -->
+    <header class="bg-teal-800 text-white py-6 px-4 shadow-md">
+        <div class="max-w-5xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
+            <div>
+                <h1 class="text-3xl font-bold tracking-tight">📋 Checklista för administratörer i Vklass</h1>
+                <p class="text-teal-100 mt-1">Interaktiv arbetsyta för systemrutiner och riktlinjer</p>
+            </div>
+            <button onclick="resetProgress()" class="bg-teal-700 hover:bg-teal-600 text-white px-4 py-2 rounded shadow transition-colors border border-teal-500">
+                🔄 Återställ data
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-grow max-w-5xl mx-auto w-full p-4 md:p-6 lg:p-8 space-y-8">
+        
+        <!-- Application Introduction -->
+        <section class="bg-white p-6 rounded-xl shadow-sm border border-stone-200 text-lg leading-relaxed">
+            <p><strong>Välkommen till din interaktiva checklista.</strong> Denna applikation är designad för att hjälpa dig som skoladministratör i Tyresö att strukturera och följa upp dina återkommande arbetsuppgifter i Vklass. Genom att integrera skolans riktlinjer direkt i ett visuellt gränssnitt säkerställer vi att inget moment, från sekretesshantering till terminsavslut, glöms bort. Interagera med panelerna nedan för att följa din progression.</p>
+        </section>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            
+            <!-- Left Column: Progress Visualization -->
+            <div class="lg:col-span-1 space-y-6">
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-stone-200">
+                    <h2 class="text-xl font-semibold mb-2 text-teal-800">📊 Din progression</h2>
+                    <p class="text-sm text-stone-500 mb-4">Översikt över färdigställda rutiner för valt område.</p>
+                    
+                    <!-- CRITICAL: Responsive Chart Container -->
+                    <div class="chart-container">
+                        <canvas id="progressChart"></canvas>
+                    </div>
+
+                    <div class="mt-6 text-center">
+                        <span class="text-3xl font-bold text-teal-700" id="progressText">0%</span>
+                        <p class="text-sm uppercase tracking-wider text-stone-500 mt-1">Avklarat</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Interactive Task Board -->
+            <div class="lg:col-span-2 space-y-6">
+                
+                <!-- Category Navigation -->
+                <div class="bg-white p-2 rounded-xl shadow-sm border border-stone-200 flex flex-wrap gap-2" id="navContainer">
+                    <!-- Buttons injected via JS -->
+                </div>
+
+                <!-- Section Context Header -->
+                <div id="sectionContext" class="bg-stone-100 p-5 rounded-lg border-l-4 border-teal-600">
+                    <h3 id="sectionTitle" class="text-lg font-bold text-teal-900 mb-1"></h3>
+                    <p id="sectionDesc" class="text-stone-700 text-sm"></p>
+                </div>
+
+                <!-- Task List -->
+                <div id="taskList" class="space-y-4">
+                    <!-- Tasks injected via JS -->
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-stone-800 text-stone-300 py-6 text-center text-sm">
+        <p>Baserat på Tyresös underlag för riktlinjer i Vklass.</p>
+    </footer>
+
+    <!-- Reset Confirmation Modal -->
+    <div id="resetModal" class="hidden fixed inset-0 bg-stone-900/50 backdrop-blur-sm flex items-start pt-32 md:pt-40 justify-center z-50 opacity-0 transition-opacity duration-300">
+        <div class="bg-white p-6 rounded-xl shadow-xl max-w-sm w-full mx-4 transform scale-95 transition-transform duration-300" id="resetModalContent">
+            <h3 class="text-xl font-bold text-stone-800 mb-2">Återställ data?</h3>
+            <p class="text-stone-600 mb-6">Är du säker på att du vill nollställa alla avklarade uppgifter? Detta går inte att ångra.</p>
+            <div class="flex justify-end gap-3">
+                <button onclick="closeResetModal()" class="px-4 py-2 font-medium text-stone-600 hover:bg-stone-100 rounded transition-colors">Avbryt</button>
+                <button onclick="confirmReset()" class="px-4 py-2 font-medium bg-red-600 hover:bg-red-700 text-white rounded transition-colors shadow-sm">Ja, återställ</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript Logic -->
+    <script>
+        // 1. Data Structure based on the Source Report
+        const categories = [
+            {
+                id: 'start',
+                title: '🚀 Inför terminsstart',
+                desc: 'Här hanterar du de kritiska uppgifterna inför en ny termin. Fokus ligger på säkerhet, korrekt användarsynkronisering från IST, och att säkerställa att personal har rätt förutsättningar (behörigheter och support) innan verksamheten drar igång.'
+            },
+            {
+                id: 'ongoing',
+                title: '🔄 Löpande under terminen',
+                desc: 'Dessa rutiner kräver kontinuerlig tillsyn under pågående läsår. Här hanterar du löpande systemunderhåll, skyddade personuppgifter (sekretess), kontakt med vårdnadshavare vid behov, samt upprätthåller kvaliteten på informationen i Vklass.'
+            },
+            {
+                id: 'end',
+                title: '🏁 Inför terminsavslut',
+                desc: 'Checklista för att stänga en termin korrekt. Denna sektion säkerställer att personal som slutar hanteras rätt, att data och samarbetsytor gallras för att spara plats och undvika oreda, samt att förberedelser inför lov (scheman, betyg) är på plats.'
+            }
+        ];
+
+        const tasksData = [
+            // Start
+            { id: 't1', category: 'start', title: 'Inga manuella användare', desc: 'Kontrollera och säkerställ att inga användare (vårdnadshavare, elever, personal) läggs in manuellt. Allt *måste* synkas från IST.' },
+            { id: 't2', category: 'start', title: 'Sekretesskontroll', desc: 'Dubbelkolla att inga barn eller elever med sekretessmarkering (skyddade personuppgifter) finns upplagda i Vklass.' },
+            { id: 't3', category: 'start', title: 'Åtkomst och behörighet', desc: 'Kontrollera att rätt personal har åtkomst till rätt klasser och avdelningar.' },
+            
+            // Länk inlagd här på id t4!
+            { 
+                id: 't4', 
+                category: 'start', 
+                title: 'Supportpersoner', 
+                desc: 'Säkerställ att skolans lokala supportperson(er) för Vklass finns upplagda och kopplade till enheten (rektor ansvarar).',
+                links: [{ url: 'https://www.vklass.se/Administration/Maintenance/EditSupportUsers.aspx', text: 'Hantera supportanvändare ↗' }]
+            },
+            
+            { id: 't5', category: 'start', title: 'Inlogg för vikarier', desc: 'Ska vikarier in i Vklass måste de få personliga inlogg upplagda. Viktigt: Inga opersonliga konton får förekomma i Vklass.' },
+            { id: 't6', category: 'start', title: 'Kontaktlistor personal', desc: 'Säkerställ att kontaktlistan för skolans personal (ofta ett delat dokument på Drive) är uppdaterad med aktuella uppgifter.' },
+            { id: 't7', category: 'start', title: 'Meddela måltidsservice', desc: 'Meddela måltidsservice om all ny personal som börjat, eftersom detta inte synkas per automatik.' },
+            { id: 't8', category: 'start', title: 'Kontrollera andra kontaktuppgifter', desc: 'Säkerställ att skolan enbart kontaktar vårdnadshavare. Funktionen för "andra kontaktuppgifter" ska inte användas i Tyresö.' },
+            { id: 't9', category: 'start', title: 'In- och utcheckning scheman', desc: 'Kontrollera att aktuella scheman stämmer (förskola / fritidshem).' },
+            
+            // Ongoing
+            { 
+                id: 't10', 
+                category: 'ongoing', 
+                title: 'Blockerade mejladresser', 
+                desc: 'Följ upp och hantera e-postadresser som studsat eller blivit blockerade.',
+                links: [{ url: 'https://www.vklass.se/administration/communication/OrganisationBlockedEmails.aspx', text: 'Blockerade mejladresser ↗' }]
+            },
+            { 
+                id: 't11', 
+                category: 'ongoing', 
+                title: 'Granska profilbilder', 
+                desc: 'Granska, godkänn eller neka uppladdade profilbilder. Ta bort olämpliga bilder (ha en rutin för gallring).',
+                links: [{ url: 'https://www.vklass.se/administration/maintenance/ReviewUserPortrait.aspx', text: 'Granska profilbilder ↗' }]
+            },
+            { id: 't12', category: 'ongoing', title: 'Uppföljning fotoförbud', desc: 'Om en vårdnadshavare har klickat i "Fotoförbud" i Vklass, kontakta dem för att följa upp. Informera om att knappen i sig inte har en inverkan direkt i Vklass (enligt Tyresös riktlinjer).' },
+            { id: 't13', category: 'ongoing', title: 'Byte av personnummer', desc: 'Om ett barn/elev får ett permanent personnummer: Uppdatera det nya personnumret i Skola24 i direkt anslutning till bytet (central förvaltning uppdaterar IST/Vklass).' },
+            { id: 't14', category: 'ongoing', title: 'Nytillkommen sekretess', desc: 'Om sekretess tillkommer under pågående termin: 1. Ta ut all information om barnet/eleven som måste bevaras. 2. Gallra därefter eleven helt från Vklass.' },
+            
+            // End
+            { id: 't15', category: 'end', title: 'Personal som slutar', desc: 'Kontrollera om personen äger samarbetsytor som ska byta ägare eller avslutas helt. Meddela även måltidsservice.' },
+            { 
+                id: 't16', 
+                category: 'end', 
+                title: 'Gallring av samarbetsgrupper', 
+                desc: 'Gå igenom vilka samarbetsgrupper/ytor som finns på skolan och gallra bort de som inte längre används.',
+                links: [{ url: 'https://www.vklass.se/administration/maintenance/ListAllSchoolTeams.aspx', text: 'Gallring av samarbetsgrupper ↗' }]
+            },
+            { id: 't17', category: 'end', title: 'Dokumentation (förskola/fritids)', desc: 'Lägg ut en "Nyhet" till vårdnadshavarna om att de måste ta ut/spara ner sitt barns dokumentation i Vklass innan barnet slutar.' },
+            { 
+                id: 't18', 
+                category: 'end', 
+                title: 'Lovschema & sommaravdelning', 
+                desc: 'Lägg ut lovschema och skapa sommaravdelning i Vklass in-/utcheckning när det är dags för sommarlov.',
+                links: [
+                    { url: 'https://support.vklass.se/knowledge-base/lovschema/', text: 'Lovschema ↗' },
+                    { url: 'https://support.vklass.se/knowledge-base/tillfalliga-avdelningar-sommaravdelningar/', text: 'Tillfälliga avdelningar ↗' }
+                ]
+            },
+            { 
+                id: 't19', 
+                category: 'end', 
+                title: 'Betygshantering', 
+                desc: 'Följ de specifika administratörsrutinerna kring betygshantering som finns publicerade på personalportalen.',
+                links: [{ url: 'https://docs.google.com/document/d/1t8aKvOEQjaaxjhurexiG7uHtgGB8yZpRca70ym4zzIY/edit?tab=t.0#heading=h.mdqko2o6pkaq', text: 'Checklista betygshantering ↗' }]
+            }
+        ];
+
+        // 2. State Management
+        let currentState = {
+            activeCategory: 'start',
+            completedTasks: new Set()
+        };
+        
+        let progressChartInstance = null;
+
+        // --- LOKAL SPARNING (localStorage) ---
+        function saveState() {
+            try {
+                // Konvertera Set till en array för att kunna spara som JSON
+                const tasksArray = Array.from(currentState.completedTasks);
+                localStorage.setItem('vklass_admin_tasks', JSON.stringify(tasksArray));
+            } catch (e) {
+                console.warn("Kunde inte spara data lokalt. (Beror oftast på förhandsgranskningsläge eller väldigt strikta webbläsarinställningar).", e);
+            }
+        }
+
+        function loadState() {
+            try {
+                const savedData = localStorage.getItem('vklass_admin_tasks');
+                if (savedData) {
+                    // Ladda in sparad data och återskapa Set-objektet
+                    const parsedTasks = JSON.parse(savedData);
+                    currentState.completedTasks = new Set(parsedTasks);
+                }
+            } catch (e) {
+                console.warn("Kunde inte läsa sparad data", e);
+            }
+        }
+        // -------------------------------------
+
+        // 3. Initialization
+        function init() {
+            loadState(); // Ladda in sparad data innan vi ritar ut gränssnittet
+            renderNavigation();
+            updateContextInfo();
+            renderTasks();
+            initChart();
+        }
+
+        // 4. UI Rendering Functions
+        function renderNavigation() {
+            const navContainer = document.getElementById('navContainer');
+            navContainer.innerHTML = '';
+            
+            categories.forEach(cat => {
+                const isActive = cat.id === currentState.activeCategory;
+                const btn = document.createElement('button');
+                btn.className = `flex-1 py-3 px-4 rounded-lg font-medium transition-all ${isActive ? 'bg-teal-700 text-white shadow-md' : 'bg-transparent text-stone-600 hover:bg-stone-100'}`;
+                btn.innerText = cat.title;
+                btn.onclick = () => {
+                    currentState.activeCategory = cat.id;
+                    renderNavigation();
+                    updateContextInfo();
+                    renderTasks();
+                    updateChart(); 
+                };
+                navContainer.appendChild(btn);
+            });
+        }
+
+        function updateContextInfo() {
+            const activeCat = categories.find(c => c.id === currentState.activeCategory);
+            document.getElementById('sectionTitle').innerText = activeCat.title;
+            document.getElementById('sectionDesc').innerText = activeCat.desc;
+        }
+
+        function renderTasks() {
+            const taskList = document.getElementById('taskList');
+            taskList.innerHTML = '';
+            
+            const filteredTasks = tasksData.filter(t => t.category === currentState.activeCategory);
+            
+            filteredTasks.forEach(task => {
+                const isCompleted = currentState.completedTasks.has(task.id);
+                
+                // Om länkar finns bygger vi knapparna med stöd för flera knappar
+                let linkHtml = '';
+                if (task.links && task.links.length > 0) {
+                    linkHtml = '<div class="mt-3 flex flex-wrap gap-2">';
+                    task.links.forEach(link => {
+                        linkHtml += `
+                            <a href="${link.url}" target="_blank" onclick="event.stopPropagation()" class="inline-block text-sm font-medium text-teal-700 hover:text-teal-900 hover:underline bg-teal-50 px-3 py-1.5 rounded-md border border-teal-200 transition-colors">
+                                ${link.text || 'Öppna länk ↗'}
+                            </a>
+                        `;
+                    });
+                    linkHtml += '</div>';
+                }
+
+                const card = document.createElement('div');
+                card.className = `task-card bg-white border-2 rounded-xl p-4 md:p-5 flex gap-4 items-start shadow-sm cursor-pointer ${isCompleted ? 'completed border-stone-200' : 'border-transparent border-l-teal-600 hover:shadow-md'}`;
+                
+                // Allow clicking anywhere on the card to toggle
+                card.onclick = (e) => {
+                    if(e.target.tagName !== 'INPUT' && e.target.tagName !== 'A') {
+                        toggleTask(task.id);
+                    }
+                };
+
+                card.innerHTML = `
+                    <div class="pt-1">
+                        <input type="checkbox" class="custom-checkbox" ${isCompleted ? 'checked' : ''} onchange="toggleTask('${task.id}')">
+                    </div>
+                    <div class="flex-1">
+                        <h4 class="text-lg font-semibold ${isCompleted ? 'text-stone-500 line-through' : 'text-stone-800'}">${task.title}</h4>
+                        <p class="text-sm mt-1 ${isCompleted ? 'text-stone-400' : 'text-stone-600'}">${task.desc}</p>
+                        ${linkHtml}
+                    </div>
+                `;
+                taskList.appendChild(card);
+            });
+        }
+
+        // 5. Interaction Logic
+        function toggleTask(taskId) {
+            if (currentState.completedTasks.has(taskId)) {
+                currentState.completedTasks.delete(taskId);
+            } else {
+                currentState.completedTasks.add(taskId);
+            }
+            saveState(); // Spara ändringen direkt i webbläsaren
+            renderTasks();
+            updateChart();
+        }
+
+        function resetProgress() {
+            const modal = document.getElementById('resetModal');
+            const modalContent = document.getElementById('resetModalContent');
+            modal.classList.remove('hidden');
+            setTimeout(() => {
+                modal.classList.remove('opacity-0');
+                modalContent.classList.remove('scale-95');
+            }, 10);
+        }
+
+        function closeResetModal() {
+            const modal = document.getElementById('resetModal');
+            const modalContent = document.getElementById('resetModalContent');
+            modal.classList.add('opacity-0');
+            modalContent.classList.add('scale-95');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+            }, 300);
+        }
+
+        function confirmReset() {
+            currentState.completedTasks.clear();
+            saveState(); // Uppdatera minnet så att rensningen också sparas
+            renderTasks();
+            updateChart();
+            closeResetModal();
+        }
+
+        // 6. Chart.js Implementation
+        function initChart() {
+            const ctx = document.getElementById('progressChart').getContext('2d');
+            
+            Chart.defaults.font.family = "'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+            Chart.defaults.color = '#57534e'; // stone-600
+
+            progressChartInstance = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Klara', 'Kvarstår'],
+                    datasets: [{
+                        data: [0, 1], 
+                        backgroundColor: [
+                            '#0f766e', 
+                            '#e7e5e4'  
+                        ],
+                        borderWidth: 0,
+                        hoverOffset: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false, 
+                    cutout: '75%',
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: { padding: 20, usePointStyle: true }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return ` ${context.label}: ${context.raw} uppgifter`;
+                                }
+                            }
+                        }
+                    },
+                    animation: {
+                        animateScale: true,
+                        animateRotate: true
+                    }
+                }
+            });
+            
+            updateChart();
+        }
+
+        function updateChart() {
+            const categoryTasks = tasksData.filter(t => t.category === currentState.activeCategory);
+            const total = categoryTasks.length;
+            const completed = categoryTasks.filter(t => currentState.completedTasks.has(t.id)).length;
+            const remaining = total - completed;
+            
+            const percentage = total === 0 ? 0 : Math.round((completed / total) * 100);
+
+            progressChartInstance.data.datasets[0].data = [completed, remaining];
+            
+            if (completed === total && total > 0) {
+                progressChartInstance.data.datasets[0].backgroundColor = ['#16a34a', '#e7e5e4']; 
+            } else {
+                progressChartInstance.data.datasets[0].backgroundColor = ['#0f766e', '#e7e5e4']; 
+            }
+
+            progressChartInstance.update();
+
+            document.getElementById('progressText').innerText = `${percentage}%`;
+        }
+
+        // Run application
+        window.addEventListener('DOMContentLoaded', init);
+
+    </script>
+</body>
+</html>
