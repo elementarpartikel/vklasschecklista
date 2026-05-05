@@ -834,25 +834,103 @@
         //              Tänkt som arkivdokument efter t.ex. avslutad terminsstart.
         // Båda byggs dynamiskt från categories + tasksData så de följer alltid
         // med när checklistan ändras, utan separata mallar att underhålla.
-        function exportToPdf(mode = 'blank') {
-            generatePrintView(mode);
-            // Liten timeout så att DOM hinner uppdateras innan utskriftsdialogen öppnas
-            setTimeout(() => window.print(), 50);
+        //
+        // IFRAME-PROBLEMATIK:
+        // När sidan bäddas in i Google Sites (eller andra plattformar) ligger
+        // den i en sandboxad iframe som blockerar window.print(). Lösningen är
+        // att öppna utskriftsvyn i ett nytt fönster som inte är sandboxat —
+        // där fungerar print() helt normalt. Vi autodetekterar iframe-läge så
+        // direktåtkomst (t.ex. på Netlify) fortfarande använder den enklare
+        // inline-utskriften utan popup.
+
+        function isEmbedded() {
+            try {
+                return window.self !== window.top;
+            } catch (e) {
+                // Cross-origin access kan kasta i vissa webbläsare — då är vi i en iframe
+                return true;
+            }
         }
 
-        function generatePrintView(mode = 'blank') {
-            const printView = document.getElementById('printView');
+        function exportToPdf(mode = 'blank') {
+            if (isEmbedded()) {
+                exportViaNewWindow(mode);
+            } else {
+                generatePrintView(mode);
+                setTimeout(() => window.print(), 50);
+            }
+        }
+
+        // Öppnar utskriftsvyn som ett självständigt dokument i ett nytt fönster.
+        // Används när sidan är inbäddad i en iframe (t.ex. Google Sites) eftersom
+        // window.print() blockeras av iframe-sandbox men funkar i ett nytt fönster.
+        function exportViaNewWindow(mode) {
+            const isFilled = mode === 'filled';
             const today = new Date().toLocaleDateString('sv-SE', {
                 year: 'numeric', month: 'long', day: 'numeric'
             });
-            const isFilled = mode === 'filled';
+            const docTitle = isFilled
+                ? `Sammanställning Vklass ${today}`
+                : 'Checklista Vklass';
 
-            // Escape för att undvika att specialtecken i task-titlar bryter HTML
-            const esc = (s) => String(s ?? '')
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;');
+            const printWindow = window.open('', '_blank');
+            if (!printWindow) {
+                // Popup blockerades. Försök informera användaren — alert() kan
+                // också vara blockerat i iframe-sandbox men vi försöker.
+                try {
+                    alert('Popup-fönstret blockerades av webbläsaren. Tillåt popups för denna sida och försök igen — eller öppna checklistan direkt på dess egna webbsida för att skriva ut.');
+                } catch (e) { /* sandbox blockerar alert — då finns inget vi kan göra */ }
+                return;
+            }
+
+            const fullHtml = `<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<title>${escapeHtml(docTitle)}</title>
+<style>${PRINT_DOCUMENT_CSS}</style>
+</head>
+<body>
+<div class="screen-actions" role="group" aria-label="Utskriftsåtgärder">
+    <button class="primary" onclick="window.print()" type="button">🖨️ Skriv ut / Spara som PDF</button>
+    <button onclick="window.close()" type="button">Stäng fönstret</button>
+</div>
+<div class="print-document">
+${buildPrintBodyHtml(mode)}
+</div>
+</body>
+</html>`;
+
+            printWindow.document.open();
+            printWindow.document.write(fullHtml);
+            printWindow.document.close();
+
+            // Trigga print automatiskt när dokumentet är fullt laddat
+            const triggerPrint = () => {
+                try {
+                    printWindow.focus();
+                    printWindow.print();
+                } catch (e) { /* Användaren kan klicka knappen istället */ }
+            };
+            if (printWindow.document.readyState === 'complete') {
+                setTimeout(triggerPrint, 250);
+            } else {
+                printWindow.addEventListener('load', () => setTimeout(triggerPrint, 250));
+            }
+        }
+
+        // Inline-print-fallback (används när sidan INTE är inbäddad)
+        function generatePrintView(mode = 'blank') {
+            document.getElementById('printView').innerHTML = buildPrintBodyHtml(mode);
+        }
+
+        // Bygger BODY-HTML för utskrift. Återanvänds av både inline-läget
+        // och nytt-fönster-läget så det finns bara en sanningskälla för layouten.
+        function buildPrintBodyHtml(mode) {
+            const isFilled = mode === 'filled';
+            const today = new Date().toLocaleDateString('sv-SE', {
+                year: 'numeric', month: 'long', day: 'numeric'
+            });
 
             // Olika rubriker beroende på läge så ett funnet papper i framtiden
             // tydligt kommunicerar vad det är
@@ -868,7 +946,7 @@
                 const noteCount = Object.values(currentState.notes).filter(n => n && n.trim() !== '').length;
                 summaryBanner = `
                     <div class="print-summary-banner">
-                        <strong>Status per ${esc(today)}:</strong>
+                        <strong>Status per ${escapeHtml(today)}:</strong>
                         ${completedTasks} av ${totalTasks} uppgifter avklarade${noteCount > 0 ? `, ${noteCount} anteckning${noteCount === 1 ? '' : 'ar'}` : ''}.
                     </div>
                 `;
@@ -876,8 +954,8 @@
 
             let html = `
                 <div class="print-header">
-                    <h1>${esc(headerTitle)}</h1>
-                    <p class="print-meta">Tyresö kommun &middot; ${isFilled ? 'Sammanställd' : 'Utskriven'} ${esc(today)}</p>
+                    <h1>${escapeHtml(headerTitle)}</h1>
+                    <p class="print-meta">Tyresö kommun &middot; ${isFilled ? 'Sammanställd' : 'Utskriven'} ${escapeHtml(today)}</p>
                 </div>
                 ${summaryBanner}
             `;
@@ -888,8 +966,8 @@
 
                 html += `
                     <section class="print-section">
-                        <h2>${esc(cat.title)}</h2>
-                        <p class="print-section-desc">${esc(cat.desc)}</p>
+                        <h2>${escapeHtml(cat.title)}</h2>
+                        <p class="print-section-desc">${escapeHtml(cat.desc)}</p>
                         <ul class="print-task-list">
                 `;
 
@@ -899,7 +977,7 @@
                         linksHtml = '<div class="print-task-links">';
                         task.links.forEach(link => {
                             const label = (link.text || 'Länk').replace(/\s*↗\s*$/, '').trim();
-                            linksHtml += `<div>↗ ${esc(label)}: <span class="print-url">${esc(link.url)}</span></div>`;
+                            linksHtml += `<div>↗ ${escapeHtml(label)}: <span class="print-url">${escapeHtml(link.url)}</span></div>`;
                         });
                         linksHtml += '</div>';
                     }
@@ -909,7 +987,7 @@
                     if (isFilled) {
                         const noteText = currentState.notes[task.id];
                         if (noteText && noteText.trim() !== '') {
-                            noteHtml = `<div class="print-task-note">${esc(noteText)}</div>`;
+                            noteHtml = `<div class="print-task-note">${escapeHtml(noteText)}</div>`;
                         }
                     }
 
@@ -922,8 +1000,8 @@
                         <li class="${taskClass}">
                             <span class="${checkboxClass}" aria-hidden="true"></span>
                             <div class="print-task-content">
-                                <strong class="print-task-title">${esc(task.title)}</strong>
-                                <p class="print-task-desc">${esc(task.desc)}</p>
+                                <strong class="print-task-title">${escapeHtml(task.title)}</strong>
+                                <p class="print-task-desc">${escapeHtml(task.desc)}</p>
                                 ${linksHtml}
                                 ${noteHtml}
                             </div>
@@ -940,8 +1018,196 @@
                 </div>
             `;
 
-            printView.innerHTML = html;
+            return html;
         }
+
+        // CSS för det fristående utskriftsfönstret. Innehåller både skärmstilar
+        // (så användaren ser dokumentet rent innan utskrift) och @media print
+        // för sidlayout. Inlinad här för att slippa hämta resurser i nytt fönster.
+        const PRINT_DOCUMENT_CSS = `
+            * { box-sizing: border-box; }
+            body {
+                margin: 0;
+                background: #f5f5f4;
+                color: #111;
+                font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                font-size: 10.5pt;
+                line-height: 1.5;
+            }
+            .print-document {
+                max-width: 21cm;
+                margin: 24px auto;
+                background: #ffffff;
+                padding: 18mm 16mm;
+                box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+                border-radius: 4px;
+            }
+            .screen-actions {
+                position: sticky;
+                top: 0;
+                display: flex;
+                gap: 8px;
+                padding: 12px 16px;
+                background: rgba(245, 245, 244, 0.95);
+                backdrop-filter: blur(6px);
+                border-bottom: 1px solid #e7e5e4;
+                z-index: 100;
+                justify-content: flex-end;
+                flex-wrap: wrap;
+            }
+            .screen-actions button {
+                padding: 8px 14px;
+                border-radius: 6px;
+                border: 1px solid #d6d3d1;
+                background: #ffffff;
+                color: #1c1917;
+                cursor: pointer;
+                font-size: 13px;
+                font-family: inherit;
+                font-weight: 500;
+                box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+                transition: background 0.15s;
+            }
+            .screen-actions button:hover { background: #fafaf9; }
+            .screen-actions .primary {
+                background: #0f766e;
+                color: #ffffff;
+                border-color: #0f766e;
+            }
+            .screen-actions .primary:hover { background: #134e4a; }
+
+            .print-header {
+                border-bottom: 2.5px solid #0f766e;
+                padding-bottom: 10px;
+                margin-bottom: 22px;
+            }
+            .print-header h1 {
+                font-size: 19pt;
+                font-weight: 700;
+                color: #0f766e;
+                margin: 0 0 4px 0;
+                letter-spacing: -0.01em;
+            }
+            .print-header .print-meta {
+                font-size: 9pt;
+                color: #555;
+                margin: 0;
+            }
+            .print-summary-banner {
+                margin: -8px 0 18px 0;
+                padding: 8px 12px;
+                background: #ecfeff;
+                border-left: 3px solid #0f766e;
+                font-size: 9.5pt;
+                color: #134e4a;
+            }
+            .print-summary-banner strong { color: #0f766e; }
+            .print-section { margin-bottom: 22px; }
+            .print-section h2 {
+                font-size: 13.5pt;
+                font-weight: 700;
+                color: #0f766e;
+                border-bottom: 1px solid #d6d3d1;
+                padding-bottom: 5px;
+                margin: 0 0 6px 0;
+                page-break-after: avoid;
+            }
+            .print-section-desc {
+                font-size: 9.5pt;
+                color: #57534e;
+                font-style: italic;
+                margin: 0 0 14px 0;
+                page-break-after: avoid;
+            }
+            .print-task-list { list-style: none; padding: 0; margin: 0; }
+            .print-task {
+                display: flex;
+                gap: 10px;
+                padding: 9px 0;
+                border-bottom: 1px solid #ececec;
+                page-break-inside: avoid;
+            }
+            .print-task:last-child { border-bottom: none; }
+            .printable-checkbox {
+                flex-shrink: 0;
+                width: 14px;
+                height: 14px;
+                border: 1.5px solid #1c1917;
+                border-radius: 2px;
+                margin-top: 3px;
+                background: #fff;
+                position: relative;
+            }
+            .printable-checkbox.checked::after {
+                content: "";
+                position: absolute;
+                left: 2.5px;
+                top: -1px;
+                width: 5px;
+                height: 9px;
+                border-right: 2px solid #1c1917;
+                border-bottom: 2px solid #1c1917;
+                transform: rotate(45deg);
+            }
+            .print-task.completed .print-task-title {
+                text-decoration: line-through;
+                color: #57534e;
+            }
+            .print-task.completed .print-task-desc { color: #57534e; }
+            .print-task-content { flex: 1; min-width: 0; }
+            .print-task-title {
+                display: block;
+                font-size: 11pt;
+                font-weight: 600;
+                color: #1c1917;
+                margin-bottom: 2px;
+            }
+            .print-task-desc { margin: 0; font-size: 10pt; color: #292524; }
+            .print-task-links { margin-top: 5px; font-size: 9pt; color: #444; }
+            .print-task-links div { margin-top: 2px; }
+            .print-url {
+                font-family: 'Courier New', Courier, monospace;
+                font-size: 8.5pt;
+                color: #555;
+                word-break: break-all;
+            }
+            .print-task-note {
+                margin-top: 6px;
+                padding: 6px 9px;
+                background: #fefce8;
+                border-left: 2.5px solid #ca8a04;
+                font-size: 9.5pt;
+                color: #292524;
+                white-space: pre-wrap;
+                word-wrap: break-word;
+            }
+            .print-task-note::before {
+                content: "📝 Anteckning: ";
+                font-weight: 600;
+                color: #713f12;
+            }
+            .print-footer {
+                margin-top: 30px;
+                padding-top: 10px;
+                border-top: 1px solid #d6d3d1;
+                font-size: 8.5pt;
+                color: #78716c;
+                text-align: center;
+            }
+
+            @media print {
+                @page { size: A4; margin: 18mm 16mm; }
+                body { background: #ffffff; }
+                .print-document {
+                    margin: 0;
+                    padding: 0;
+                    max-width: 100%;
+                    box-shadow: none;
+                    border-radius: 0;
+                }
+                .screen-actions { display: none; }
+            }
+        `;
 
         // 7. Chart.js Implementation
         function initChart() {
